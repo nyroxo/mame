@@ -108,6 +108,7 @@ const int MODE_GDI = 2;
 #define OPTION_NUMPROCESSORS "numprocessors"
 #define OPTION_SIZE "size"
 #define OPTION_TEMPLATE "template"
+#define OPTION_SPLIT_OUTPUT_BIN "splitoutputbin"
 
 
 //**************************************************************************
@@ -616,6 +617,7 @@ static const option_description s_options[] =
 	{ OPTION_VERBOSE,               "v",    false, ": output additional information" },
 	{ OPTION_SIZE,                  "s",    true, ": <bytes>: size of the output file" },
 	{ OPTION_TEMPLATE,              "tp",   true, ": <id>: use hard disk template (see listtemplates)" },
+	{ OPTION_SPLIT_OUTPUT_BIN,      "sob",  false, ": split binary data across multiple files based on track metadata" },
 };
 
 
@@ -733,6 +735,7 @@ static const command_description s_commands[] =
 			OPTION_OUTPUT_FORCE,
 			REQUIRED OPTION_INPUT,
 			OPTION_INPUT_PARENT,
+			OPTION_SPLIT_OUTPUT_BIN
 		}
 	},
 
@@ -1324,8 +1327,8 @@ void output_track_metadata(int mode, util::core_file &file, int tracknum, const 
 	}
 	else if (mode == MODE_CUEBIN)
 	{
-		// first track specifies the file
-		if (tracknum == 0)
+		// first track specifies a FILE entry; frame offset is always zero on the first track
+		if (frameoffs == 0)
 			file.printf("FILE \"%s\" BINARY\n", filename);
 
 		// determine submode
@@ -2437,13 +2440,16 @@ static void do_extract_cd(parameters_map &params)
 			mode = MODE_GDI;
 		}
 
+		// determine if output binary data should be split across multiple binary files
+		const bool split_output_bin = (mode == MODE_GDI || (mode == MODE_CUEBIN && params.find(OPTION_SPLIT_OUTPUT_BIN) != params.end()));
+
 		// process output file
 		osd_file::error filerr = util::core_file::open(*output_file_str->second, OPEN_FLAG_WRITE | OPEN_FLAG_CREATE | OPEN_FLAG_NO_BOM, output_toc_file);
 		if (filerr != osd_file::error::NONE)
 			report_error(1, "Unable to open file (%s)", output_file_str->second->c_str());
 
-		// process output BIN file
-		if (mode != MODE_GDI)
+		// process output BIN file; in this case only one BIN file will be emitted during extraction
+		if (!split_output_bin)
 		{
 			filerr = util::core_file::open(*output_bin_file_str, OPEN_FLAG_WRITE | OPEN_FLAG_CREATE, output_bin_file);
 			if (filerr != osd_file::error::NONE)
@@ -2469,12 +2475,13 @@ static void do_extract_cd(parameters_map &params)
 		{
 			std::string trackbin_name(basename);
 
-			if (mode == MODE_GDI)
+			// if splitting binary data across files, rotate output binary file pointer for the current track
+			if (split_output_bin)
 			{
 				char temp[11];
 				sprintf(temp, "%02d", tracknum+1);
 				trackbin_name.append(temp);
-				if (toc->tracks[tracknum].trktype == CD_TRACK_AUDIO)
+				if (mode == MODE_GDI && toc->tracks[tracknum].trktype == CD_TRACK_AUDIO)
 					trackbin_name.append(".raw");
 				else
 					trackbin_name.append(".bin");
@@ -2493,6 +2500,11 @@ static void do_extract_cd(parameters_map &params)
 			if (mode == MODE_GDI)
 			{
 				output_track_metadata(mode, *output_toc_file, tracknum, trackinfo, std::string(core_filename_extract_base(trackbin_name)), discoffs, outputoffs);
+			}
+			else if (mode == MODE_CUEBIN && split_output_bin)
+			{
+			    // each track should be written as a separate FILE entry in the cuesheet; discoffs and outputoffs are always zero here to designate this behavior
+                output_track_metadata(mode, *output_toc_file, tracknum, trackinfo, std::string(core_filename_extract_base(trackbin_name)), 0, 0);
 			}
 			else
 			{
