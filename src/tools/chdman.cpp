@@ -2478,13 +2478,11 @@ static void do_extract_cd(parameters_map &params)
 			// if splitting binary data across files, rotate output binary file pointer for the current track
 			if (split_output_bin)
 			{
-				char temp[11];
-				sprintf(temp, "%02d", tracknum+1);
+			    const size_t buffer_size = 25;
+				char temp[buffer_size];
+				const std::string format = toc->numtrks < 10 ? " (Track %d).bin" : " (Track %02d).bin";
+                sprintf_s(temp, buffer_size, format.c_str(), tracknum + 1);
 				trackbin_name.append(temp);
-				if (mode == MODE_GDI && toc->tracks[tracknum].trktype == CD_TRACK_AUDIO)
-					trackbin_name.append(".raw");
-				else
-					trackbin_name.append(".bin");
 
 				output_bin_file.reset();
 
